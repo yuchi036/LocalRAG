@@ -45,7 +45,8 @@ def main():
 
     chunks = load_and_chunk(args.doc)
     tok = get_tokenizer(args.segment)
-    bm25 = BM25([tok(c["text"]) for c in chunks])
+    # 文档与查询使用同一个 tokenizer 实例，杜绝分词不一致（旧版全局 _SEGMENT 的 BUG 已修）
+    bm25 = BM25([tok(c["text"]) for c in chunks], tokenizer=tok)
 
     hits_at_1 = 0
     hits_at_k = 0

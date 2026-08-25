@@ -64,10 +64,6 @@ def get_tokenizer(segment="auto"):
     return _char_tokenize
 
 
-# 向后兼容：evaluate.py 直接 import tokenize 时使用字级
-tokenize = _char_tokenize
-
-
 SUPPORTED_EXT = {".md", ".markdown", ".txt", ".pdf"}
 
 
@@ -154,7 +150,8 @@ def load_and_chunk(path):
 
 
 class BM25:
-    def __init__(self, docs, k1=1.5, b=0.75):
+    def __init__(self, docs, tokenizer=_char_tokenize, k1=1.5, b=0.75):
+        self.tokenizer = tokenizer
         self.k1 = k1
         self.b = b
         self.docs = docs
@@ -178,7 +175,7 @@ class BM25:
         return self.idf_cache[t]
 
     def search(self, query, topk=3):
-        q_tokens = _tokenize_query(query)
+        q_tokens = self.tokenizer(query)
         if not q_tokens:
             return []
         scored = []
@@ -202,14 +199,7 @@ class BM25:
         return score
 
 
-# 查询分词器在 build_index 时确定（与文档分词一致）
-_SEGMENT = "auto"
-
-
-def _tokenize_query(query):
-    return get_tokenizer(_SEGMENT)(query)
-
-
+# 查询分词与文档分词由同一个 tokenizer 实例保证一致（构造 BM25 时注入）。
 def generate_with_ollama(question, contexts, model="qwen2.5:1.5b", base_url="http://localhost:11434"):
     """本地生成段：把召回片段拼成上下文，调用本机 Ollama 模型作答。零云端依赖。"""
     context = "\n\n".join(f"【{title}】（来源：{src}）\n{text}" for title, text, src in contexts)
@@ -241,11 +231,9 @@ def generate_with_ollama(question, contexts, model="qwen2.5:1.5b", base_url="htt
 
 def build_index(doc_path, segment="auto"):
     """构建 BM25 索引并返回 (chunks, bm25)。segment 决定中英文分词方式。"""
-    global _SEGMENT
-    _SEGMENT = segment
     chunks = load_and_chunk(doc_path)
     tok = get_tokenizer(segment)
-    bm25 = BM25([tok(c["text"]) for c in chunks])
+    bm25 = BM25([tok(c["text"]) for c in chunks], tokenizer=tok)
     return chunks, bm25
 
 
