@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-本地知识问答检索层（RAG 的 Retrieval 段）
-- 纯标准库实现 BM25，无第三方依赖，离线可用
-- 对 Markdown 按标题/段落分块，做中文粗粒度切词后检索
-- 输入问题 → 返回 Top-K 相关片段（供 LLM 生成段作答）
+本地知识问答（RAG 全链路：Retrieval + Generation，完全离线）
+- Retrieval 段：纯标准库实现 BM25，对 Markdown 分块、中文粗粒度切词后召回 Top-K 片段
+- Generation 段：可选接入本机 Ollama 模型（如 qwen2.5:1.5b）基于召回片段作答
+- 全程零云端依赖：不联网、数据不出本机、无 API 费用
 
 用法：
-  python rag_qa.py --doc 生成式AI短视频内容营销知识库.md --questions questions.txt --topk 2
+  # 仅检索（默认，最快）
   python rag_qa.py --doc 生成式AI短视频内容营销知识库.md --query "完播率多少算优秀"
+
+  # 检索 + 本地模型生成（离线 RAG 闭环，需先 `ollama pull qwen2.5:1.5b` 并启动服务）
+  python rag_qa.py --doc 生成式AI短视频内容营销知识库.md --query "完播率多少算优秀" --generate
+  python rag_qa.py --doc 生成式AI短视频内容营销知识库.md --questions questions.txt --generate --topk 2
 """
 
 import argparse
+import json
 import math
 import re
 import sys
+import urllib.request
 
 
 def load_and_chunk(path):
@@ -119,12 +125,45 @@ class BM25:
         return score
 
 
+def generate_with_ollama(question, contexts, model="qwen2.5:1.5b", base_url="http://localhost:11434"):
+    """本地生成段：把召回片段拼成上下文，调用本机 Ollama 模型作答。零云端依赖。"""
+    context = "\n\n".join(f"【{title}】\n{text}" for title, text in contexts)
+    prompt = (
+        "你是一个严谨的问答助手。请只根据下面提供的「资料」回答问题，"
+        "不要使用资料之外的知识；如果资料中没有相关信息，请回答「资料中未提及」。\n\n"
+        f"资料：\n{context}\n\n"
+        f"问题：{question}\n\n回答："
+    )
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0.2, "num_predict": 320},
+    }
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/api/generate",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data.get("response", "").strip()
+    except Exception as e:  # noqa: BLE001
+        return f"（本地模型调用失败：{e}；请确认 Ollama 已启动且模型已拉取）"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--doc", default="生成式AI短视频内容营销知识库.md")
     ap.add_argument("--questions", default=None, help="问题列表文件，一行一个")
     ap.add_argument("--query", default=None, help="单个问题")
     ap.add_argument("--topk", type=int, default=2)
+    ap.add_argument("--generate", action="store_true",
+                    help="启用本地模型(Ollama)生成答案，实现离线 RAG 闭环")
+    ap.add_argument("--model", default="qwen2.5:1.5b", help="Ollama 模型名")
+    ap.add_argument("--ollama-url", default="http://localhost:11434", help="Ollama 服务地址")
     args = ap.parse_args()
 
     chunks = load_and_chunk(args.doc)
@@ -152,6 +191,14 @@ def main():
             print(f"\n  [{rank}] 命中小节：{chunks[idx]['title']}  (score={sc:.3f})")
             snippet = chunks[idx]["text"].replace("\n", " ")
             print("      " + snippet[:240] + ("…" if len(snippet) > 240 else ""))
+
+        if args.generate:
+            contexts = [(chunks[idx]["title"], chunks[idx]["text"]) for _, idx in hits]
+            print(f"\n  [本地模型作答 · {args.model}]")
+            answer = generate_with_ollama(
+                q, contexts, model=args.model, base_url=args.ollama_url
+            )
+            print("  " + answer.replace("\n", "\n  "))
 
 
 if __name__ == "__main__":
