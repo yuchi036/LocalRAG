@@ -12,6 +12,8 @@
   <b>把你的本地笔记（Markdown / 文本 / PDF）变成一个隐私优先、离线、可问答的助手 —— 默认零依赖。</b>
 </p>
 
+<p align="center"><img src="docs/demo_result.png" alt="LocalRAG demo: demo question chips, live baseline metrics (Recall@3 89%, MRR 0.889), per-chunk source line numbers, matched terms, and 赞/踩 feedback" width="820"></p>
+
 ---
 
 ## English
@@ -164,6 +166,13 @@ No arguments needed — it picks the built-in knowledge base, opens the web UI w
 python -m localrag --demo        # → http://localhost:8000  (click any 示例问题 to ask)
 ```
 This is the fastest way to *see* the product: search + matched-term explanations + live quality baseline + 赞/踩 feedback, all in the browser.
+
+<p align="center">
+  <img src="docs/demo_home.png" alt="LocalRAG demo homepage with preset question chips and baseline metrics panel" width="780"><br>
+  <img src="docs/demo_result.png" alt="LocalRAG results: ranked hits with source line numbers, matched terms, and 赞/踩 feedback buttons" width="780">
+</p>
+
+> Recording a 30s GIF: run `--demo` and capture the browser with your preferred recorder (e.g. ShareX, ScreenToGif, or `ffmpeg -f gdigrab -framerate 30 -i desktop …`).
 
 ## License
 [MIT](LICENSE) — free to use, modify, and distribute.
