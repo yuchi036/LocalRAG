@@ -40,7 +40,7 @@ python rag_qa.py --query "完播率多少算优秀"
 python rag_qa.py --doc ./my-notes --serve
 # → open http://localhost:8000
 ```
-> Optional enhancements: `pip install jieba` (better Chinese word segmentation) and `pip install PyPDF2` (read PDFs).
+> Optional enhancements: `pip install jieba` (better Chinese word segmentation), `pip install PyPDF2` (read PDFs), `pip install sentence-transformers` (semantic hybrid via `--hybrid`). Or `pip install .` to get a `localrag` command.
 
 ### Optional: local model generation (fully offline)
 ```bash
@@ -61,7 +61,8 @@ The repo ships with `生成式AI短视频内容营销知识库.md` — a domain 
 - **Privacy-conscious users** — everything stays local; nothing is sent to any server.
 
 ### Roadmap
-- [ ] Vector/semantic retrieval backend (FAISS / sentence-transformers, optional)
+- [x] Vector/semantic retrieval backend (sentence-transformers, optional, RRF fusion — `--hybrid`)
+- [x] Packaging & test suite (`pyproject.toml`, 29 pytest tests, `pip install .` → `localrag` command)
 - [ ] Better PDF & DOCX parsing
 - [ ] Conversation memory across turns
 - [ ] One-command installer / Docker
@@ -87,7 +88,7 @@ python rag_qa.py --query "完播率多少算优秀"          # 用内置示例�
 python rag_qa.py --doc ./my-notes --serve           # 指向你自己的笔记目录并开网页
 # → 浏览器打开 http://localhost:8000
 ```
-> 可选增强：`pip install jieba`（更准的中文分词）、`pip install PyPDF2`（读 PDF）。
+> 可选增强：`pip install jieba`（更准的中文分词）、`pip install PyPDF2`（读 PDF）、`pip install sentence-transformers`（语义混合检索 `--hybrid`）。或 `pip install .` 安装为 `localrag` 命令。
 
 ### 可选：本地模型生成（完全离线）
 ```bash
@@ -108,7 +109,8 @@ python rag_qa.py --doc ./my-notes --query "项目复盘要注意什么" --genera
 - **注重隐私者**：一切在本地，不上传任何服务器。
 
 ### 路线图
-- [ ] 语义/向量检索后端（FAISS / sentence-transformers，可选）
+- [x] 语义/向量检索后端（sentence-transformers，可选，RRF 融合 —— `--hybrid`）
+- [x] 打包与测试（`pyproject.toml`，29 项 pytest，`pip install .` → `localrag` 命令）
 - [ ] 更强的 PDF / DOCX 解析
 - [ ] 多轮对话记忆
 - [ ] 一键安装 / Docker
@@ -129,14 +131,17 @@ LocalRAG/
 │  ├─ feedback.py                  # 赞/踩反馈日志（追加式 JSONL）
 │  ├─ webui.py                     # 零依赖 Web UI（深色主题，含赞/踩反馈按钮）
 │  ├─ metrics.py                   # 可量化指标（Recall@k/MRR/覆盖率/延迟，分词对比）
+│  ├─ semantic.py                  # 可选语义检索（BM25+语义 RRF 融合，自动降级）
 │  ├─ evaluation.py                # 检索质量评估（基于 metrics，CLI 报告）
 │  ├─ cli.py                       # 命令行入口（rag_qa.py 转发至此）
 │  └─ __main__.py                  # 支持 python -m localrag
+├─ tests/                          # pytest 测试套件（29 项：BM25/分词/分块/持久化/管道/语义/CLI）
 ├─ rag_qa.py / evaluate.py         # 向后兼容入口（转发到 localrag 包）
 ├─ 生成式AI短视频内容营销知识库.md   # 内置示例知识库（AIGC 内容营销）
 ├─ questions.txt / demo_qa.md      # 示例问题与两段式问答演练
 ├─ ima_practice.md / ima_questions.md  # 云端语义检索（ima）实践与对照
-├─ requirements.txt                # 可选依赖（jieba / PyPDF2）
+├─ pyproject.toml                  # 打包配置（pip install . → localrag 命令）
+├─ requirements.txt                # 可选依赖（jieba / PyPDF2 / sentence-transformers）
 ├─ LICENSE                         # MIT
 └─ README.md
 ```
@@ -159,6 +164,11 @@ LocalRAG/
 ## What's new (v0.4.0)
 - **Quantified retrieval quality** — `evaluate.py` reports **Recall@k, Recall@1, MRR, coverage, and search latency (p50/p95)** on a hand-labeled set. The web homepage shows the live baseline for the built-in KB. `evaluate.py --compare` honestly contrasts `char` vs `jieba` segmentation (skips jieba if not installed).
 - **Explainable retrieval** — every result now lists the **matched terms** (which query tokens actually fired), so you can see *why* a chunk was recalled. CLI and web UI both surface this.
+
+## What's new (v0.5.0)
+- **Packaging** — `pyproject.toml` makes the project a real installable package: `pip install .` gives you a `localrag` console command. `python -m localrag` still works.
+- **Test suite** — 29 pytest tests cover BM25 scoring monotonicity, tokenization, chunking with line numbers, index save/load round-trip, pipeline integration, semantic RRF fusion, and CLI shims. Run with `pytest tests/ -v`.
+- **Optional semantic hybrid** — `--hybrid` activates BM25 + sentence-transformers RRF fusion for concept-level queries (e.g. "数字人"). If `sentence-transformers` isn't installed, it gracefully degrades to pure BM25 with a stderr notice — zero-dependency default never breaks.
 
 ## Demo (zero-config)
 No arguments needed — it picks the built-in knowledge base, opens the web UI with preset example questions, and works fully offline:

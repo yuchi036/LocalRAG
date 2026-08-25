@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "localrag"
+version = "0.4.0"
+description = "Privacy-first, local, zero-dependency RAG knowledge-base Q&A (BM25 + optional local generation)."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+keywords = ["RAG", "BM25", "local", "privacy", "offline", "knowledge-base"]
+authors = [{ name = "LocalRAG" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Indexing",
+]
+dependencies = []
+
+[project.optional-dependencies]
+full = ["jieba>=0.42", "PyPDF2>=3.0"]
+semantic = ["sentence-transformers>=2.2"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+localrag = "localrag.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yuchi036/pirate-knowledge-base"
+
+[tool.setuptools.packages.find]
+include = ["localrag*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

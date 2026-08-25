@@ -3,5 +3,8 @@
 jieba>=0.42
 # 支持读取 PDF 笔记（否则仅支持 .md/.txt）
 PyPDF2>=3.0
+# 可选：语义检索（BM25+语义 RRF 融合，解决"数字人"等概念型查询）
+# 用法：python -m localrag --hybrid --query "数字人怎么做短视频"
+sentence-transformers>=2.2
 # 可选：本地生成段（不装也能跑检索；装 Ollama 即可离线生成答案）
 # Ollama 独立安装：https://ollama.com  ，然后 `ollama pull qwen2.5:1.5b`

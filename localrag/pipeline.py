@@ -4,6 +4,7 @@ from localrag.bm25 import BM25
 from localrag.generation import generate_with_ollama
 from localrag.ingestion import load_and_chunk
 from localrag.persist import load_index, make_index_path, save_index
+from localrag.semantic import hybrid_search
 from localrag.tokenize import get_tokenizer
 
 
@@ -39,9 +40,18 @@ def restore_or_build(doc_path, segment="auto", index_path=None, verbose=True):
 
 
 def run_query(chunks, bm25, question, topk=2, generate=False,
-              model="qwen2.5:1.5b", ollama_url="http://localhost:11434"):
-    """统一的查询入口：检索（必做）+ 可选本地模型生成，返回结果字典。"""
-    hits = bm25.search(question, topk=topk)
+              model="qwen2.5:1.5b", ollama_url="http://localhost:11434",
+              hybrid=False, semantic_model=None, encoder=None):
+    """统一的查询入口：检索（必做）+ 可选本地模型生成，返回结果字典。
+
+    hybrid=True 时走 BM25 + 语义 RRF 融合（需 sentence-transformers；缺失自动降级）。
+    匹配词始终基于 BM25 词面解释，与 hybrid 无关，保证「为何召回」的可读性。
+    """
+    if hybrid:
+        hits = hybrid_search(bm25, chunks, question, topk=topk,
+                             model_name=semantic_model, encoder=encoder)
+    else:
+        hits = bm25.search(question, topk=topk)
     result = {"question": question, "hits": [], "answer": None}
     for sc, idx in hits:
         result["hits"].append({
@@ -81,7 +91,8 @@ def print_result(result, show_answer=True):
         print("  " + result["answer"].replace("\n", "\n  "))
 
 
-def interactive_mode(chunks, bm25, args):
+def interactive_mode(chunks, bm25, args, hybrid=False, semantic_model=None,
+                     encoder=None):
     """交互式问答：输入问题回车即得结果，输入 exit/quit 退出。"""
     print("=== 交互模式（输入问题回车提问；输入 exit 退出）===")
     while True:
@@ -97,4 +108,6 @@ def interactive_mode(chunks, bm25, args):
             break
         print_result(run_query(chunks, bm25, q, topk=args.topk,
                                generate=args.generate, model=args.model,
-                               ollama_url=args.ollama_url))
+                               ollama_url=args.ollama_url,
+                               hybrid=hybrid, semantic_model=semantic_model,
+                               encoder=encoder))

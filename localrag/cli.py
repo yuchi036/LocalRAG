@@ -43,6 +43,10 @@ def main():
     ap.add_argument("--no-cache", action="store_true", help="禁用索引落盘（每次启动重建）")
     ap.add_argument("--feedback", default=".localrag_feedback.jsonl",
                     help="Web UI 反馈日志(JSONL)路径，首次点击自动创建")
+    ap.add_argument("--hybrid", action="store_true",
+                    help="启用 BM25 + 语义 RRF 融合（需 pip install sentence-transformers）")
+    ap.add_argument("--semantic-model", default=None,
+                    help="语义模型名（默认 shibing624/text2vec-base-chinese），需 --hybrid")
     args = ap.parse_args()
 
     if args.demo:
@@ -60,7 +64,8 @@ def main():
         run_server(chunks, bm25, args)
         return
     if args.interactive:
-        interactive_mode(chunks, bm25, args)
+        interactive_mode(chunks, bm25, args, hybrid=args.hybrid,
+                         semantic_model=args.semantic_model)
         return
 
     queries = []
@@ -81,4 +86,5 @@ def main():
     for q in queries:
         print_result(run_query(chunks, bm25, q, topk=args.topk,
                                generate=args.generate, model=args.model,
-                               ollama_url=args.ollama_url))
+                               ollama_url=args.ollama_url,
+                               hybrid=args.hybrid, semantic_model=args.semantic_model))

@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
 # LocalRAG 运行时自动生成的索引缓存与反馈日志（不参与版本管理）
 .localrag_index.json
 .localrag_index.pkl
