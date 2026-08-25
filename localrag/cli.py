@@ -3,7 +3,9 @@
 import argparse
 import sys
 
-from localrag.pipeline import build_index, interactive_mode, print_result, run_query
+from localrag.persist import make_index_path
+from localrag.pipeline import (interactive_mode, print_result, restore_or_build,
+                               run_query)
 from localrag.webui import run_server
 
 
@@ -23,9 +25,15 @@ def main():
     ap.add_argument("--interactive", action="store_true", help="交互式问答模式")
     ap.add_argument("--serve", action="store_true", help="启动本地 Web UI（零依赖，浏览器问答）")
     ap.add_argument("--port", type=int, default=8000, help="Web UI 端口")
+    ap.add_argument("--index", default=None,
+                    help="索引缓存路径；默认在文档旁生成 .localrag_index.json 实现秒开")
+    ap.add_argument("--no-cache", action="store_true", help="禁用索引落盘（每次启动重建）")
+    ap.add_argument("--feedback", default=".localrag_feedback.jsonl",
+                    help="Web UI 反馈日志(JSONL)路径，首次点击自动创建")
     args = ap.parse_args()
 
-    chunks, bm25 = build_index(args.doc, segment=args.segment)
+    index_path = None if args.no_cache else (args.index or make_index_path(args.doc))
+    chunks, bm25, loaded = restore_or_build(args.doc, segment=args.segment, index_path=index_path)
     if not chunks:
         print(f"未在 {args.doc} 读取到内容块（检查路径/后缀 .md .txt .pdf）", file=sys.stderr)
         sys.exit(1)

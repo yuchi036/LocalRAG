@@ -22,7 +22,8 @@ Everyone accumulates scattered local notes — lecture notes, research papers, m
 ### What it does
 - **Retrieval** — a from-scratch BM25 engine in the Python standard library (no external packages). Point it at a single file or an entire folder; it indexes every `.md` / `.txt` / `.pdf` and recalls the most relevant chunks for your question.
 - **Generation (optional)** — if you have [Ollama](https://ollama.com) running locally with a model like `qwen2.5:1.5b`, it generates an answer grounded in the retrieved chunks. Data never leaves your machine.
-- **Interfaces** — command line, interactive REPL, and a **zero-dependency web UI** (`--serve`) you can open in a browser.
+- **Interfaces** — command line, interactive REPL, and a **zero-dependency web UI** (`--serve`) you can open in a browser. The web UI shows 赞/踩 feedback buttons to collect real user signals.
+- **Engineered for reuse** — indexes are cached for instant reload (`.localrag_index.json`), every citation points to a source file **and line range** (`L80-87`), and a `--demo` is coming for zero-config showcases.
 
 ### Quick start
 ```bash
@@ -73,7 +74,8 @@ The repo ships with `生成式AI短视频内容营销知识库.md` — a domain 
 ### 它能做什么
 - **检索段**：用 Python 标准库从零实现的 BM25 引擎（无任何第三方包）。指向单个文件或整个目录，自动索引所有 `.md` / `.txt` / `.pdf`，按问题召回最相关片段。
 - **生成段（可选）**：若本机运行着 [Ollama](https://ollama.com) 并拉取了如 `qwen2.5:1.5b` 的模型，可基于召回片段生成答案；数据不出本机。
-- **多种入口**：命令行、交互式 REPL，以及**零依赖网页 UI**（`--serve`，浏览器直接打开）。
+- **多种入口**：命令行、交互式 REPL，以及**零依赖网页 UI**（`--serve`，浏览器直接打开）；网页端每条结果带「赞/踩」按钮，沉淀真实反馈。
+- **工程化打磨**：索引自动缓存、二次启动秒开（`.localrag_index.json`）；每条引用标注**来源文件与行号**（`L80-87`），可直接回溯原文。
 
 ### 快速开始
 ```bash
@@ -115,8 +117,19 @@ python rag_qa.py --doc ./my-notes --query "项目复盘要注意什么" --genera
 
 ```
 LocalRAG/
-├─ rag_qa.py                       # 核心：BM25 检索 + 可选本地生成 + 交互/Web（零依赖）
-├─ evaluate.py                     # 检索质量评估（Recall@k / 命中率）
+├─ localrag/                       # 核心包（模块化，单文件 <200 行）
+│  ├─ bm25.py                      # 纯标准库 BM25 检索（tokenizer 注入，状态可序列化）
+│  ├─ ingestion.py                 # 文档加载与分块（.md/.txt/.pdf，目录递归，来源带行号）
+│  ├─ tokenize.py                  # 中文分词：零依赖字级 / 可选 jieba
+│  ├─ generation.py                # 本地生成段（Ollama，数据不出本机）
+│  ├─ pipeline.py                  # 编排：索引构建/持久化、查询、交互模式
+│  ├─ persist.py                   # 索引持久化（JSON/pickle，带版本号，二次启动秒开）
+│  ├─ feedback.py                  # 赞/踩反馈日志（追加式 JSONL）
+│  ├─ webui.py                     # 零依赖 Web UI（深色主题，含赞/踩反馈按钮）
+│  ├─ evaluation.py                # 检索质量评估（Recall@k / 命中率）
+│  ├─ cli.py                       # 命令行入口（rag_qa.py 转发至此）
+│  └─ __main__.py                  # 支持 python -m localrag
+├─ rag_qa.py / evaluate.py         # 向后兼容入口（转发到 localrag 包）
 ├─ 生成式AI短视频内容营销知识库.md   # 内置示例知识库（AIGC 内容营销）
 ├─ questions.txt / demo_qa.md      # 示例问题与两段式问答演练
 ├─ ima_practice.md / ima_questions.md  # 云端语义检索（ima）实践与对照
@@ -130,7 +143,15 @@ LocalRAG/
 ```
 用户问题 ──► [Retrieval] BM25 从本地知识库召回 Top-K 片段 ──► [Generation] 本地模型基于片段作答（可选）
             （标准库实现，支持文件/目录/PDF，可选 jieba 分词）        （Ollama，数据不出本机）
+                      │
+            [Persist] 索引落盘(JSON/pickle, 带版本号) → 二次启动秒开；来源标注行号(Lx-y)可回溯
+            [Feedback] Web UI 赞/踩 → JSONL 沉淀反馈，反哺检索质量评估
 ```
+
+## What's new (v0.3.0)
+- **Index persistence** — indexes are cached next to the document (`.localrag_index.json`); a second launch loads in milliseconds instead of rebuilding. Use `--index PATH` to control the path, or `--no-cache` to disable. Large corpora can also use `--index cache.pkl` (pickle, faster + smaller).
+- **Locatable citations** — every recalled chunk carries a source file and line range (`L80-87`), so you can jump straight back to the original text.
+- **Feedback loop** — the web UI shows 赞/踩 (thumbs up / down) buttons on each result; clicks are appended to a JSONL log (`--feedback PATH`, created on first use) for later retrieval-quality analysis.
 
 ## License
 [MIT](LICENSE) — free to use, modify, and distribute.

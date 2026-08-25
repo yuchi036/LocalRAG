@@ -3,6 +3,7 @@
 from localrag.bm25 import BM25
 from localrag.generation import generate_with_ollama
 from localrag.ingestion import load_and_chunk
+from localrag.persist import load_index, make_index_path, save_index
 from localrag.tokenize import get_tokenizer
 
 
@@ -12,6 +13,29 @@ def build_index(doc_path, segment="auto"):
     tok = get_tokenizer(segment)
     bm25 = BM25([tok(c["text"]) for c in chunks], tokenizer=tok)
     return chunks, bm25
+
+
+def restore_or_build(doc_path, segment="auto", index_path=None, verbose=True):
+    """优先从索引加载（文档未变则秒开）；否则构建并落盘。返回 (chunks, bm25, loaded)。
+
+    - index_path 为 None 时不持久化，直接构建（保持 CLI 默认零副作用）。
+    - 索引存在但与文档/分词不符时自动重建并覆盖保存。
+    """
+    tok = get_tokenizer(segment)
+    if index_path:
+        expected_name = BM25._name_of(tok)
+        restored = load_index(index_path, doc_path=doc_path, tokenizer_name=expected_name)
+        if restored is not None:
+            if verbose:
+                print(f"[index] 命中缓存索引：{index_path}（跳过重建）")
+            return restored[0], restored[1], True
+        chunks, bm25 = build_index(doc_path, segment=segment)
+        save_index(index_path, chunks, bm25, doc_path)
+        if verbose:
+            print(f"[index] 已构建并保存索引：{index_path}")
+        return chunks, bm25, False
+    chunks, bm25 = build_index(doc_path, segment=segment)
+    return chunks, bm25, False
 
 
 def run_query(chunks, bm25, question, topk=2, generate=False,
@@ -24,6 +48,7 @@ def run_query(chunks, bm25, question, topk=2, generate=False,
             "title": chunks[idx]["title"],
             "text": chunks[idx]["text"],
             "source": chunks[idx].get("source", ""),
+            "loc": chunks[idx].get("loc", ""),
             "score": sc,
         })
     if generate and hits:
@@ -42,7 +67,9 @@ def print_result(result, show_answer=True):
         print("（未命中相关片段）")
         return
     for rank, h in enumerate(result["hits"], 1):
-        src = f"  · 来源：{h['source']}" if h["source"] else ""
+        src = f"  · 来源：{h['source']}"
+        if h.get("loc"):
+            src += f" ({h['loc']})"
         print(f"\n  [{rank}] 命中小节：{h['title']}  (score={h['score']:.3f}){src}")
         snippet = h["text"].replace("\n", " ")
         print("      " + snippet[:240] + ("…" if len(snippet) > 240 else ""))

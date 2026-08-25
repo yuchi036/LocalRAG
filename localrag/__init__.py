@@ -6,8 +6,9 @@
 - Generation 段：可选接入本机 Ollama 模型基于召回片段作答，数据不出本机。
 - 输入：单个文件、或整个目录（递归索引所有 .md/.txt/.pdf）。
 - 交互：CLI（--query/--interactive/--serve）、可量化评估（evaluation）。
+- 工程化（S3）：索引持久化秒开、来源行号可定位、Web UI 赞/踩反馈沉淀。
 """
 from localrag.cli import main
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["main"]
