@@ -1,106 +1,136 @@
-# AIGC 短视频内容营销 · 知识库 + 本地 RAG 问答 Demo
+<p align="center">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/python-3.8%2B-blue" alt="Python">
+  <img src="https://img.shields.io/badge/dependencies-zero%20(default)-orange" alt="Dependencies">
+  <img src="https://img.shields.io/badge/privacy-offline%20%2F%20local-success" alt="Privacy">
+</p>
 
-> 一个面向「生成式 AI × 短视频内容营销」领域的**可检索知识库**，外加一个**本地 RAG 问答 Demo**——Retrieval 用自研 BM25，Generation 可接本机 Ollama 模型，实现完全离线闭环。
-> 选题契合当下 AI 应用层最热方向（AIGC / 视频生成 / 智能投放），且紧贴真实业务（短视频内容生产与买量），可作为简历/面试的项目经历。
+<h1 align="center">LocalRAG · 隐私优先的本地知识库问答</h1>
+
+<p align="center">
+  <b>Turn your Markdown / text / PDF notes into a private, offline, searchable Q&amp;A assistant — zero dependencies by default.</b><br>
+  <b>把你的本地笔记（Markdown / 文本 / PDF）变成一个隐私优先、离线、可问答的助手 —— 默认零依赖。</b>
+</p>
+
+---
+
+## English
+
+### Why this exists (the problem)
+Everyone accumulates scattered local notes — lecture notes, research papers, meeting docs, personal wikis. But asking questions over them usually means either (a) pasting them into a **cloud** AI tool (privacy risk, cost, rate limits) or (b) manually searching. **LocalRAG** lets you run a complete Retrieval-Augmented Generation (RAG) pipeline **entirely on your own machine**, with **no API keys, no cloud, no cost**.
+
+### What it does
+- **Retrieval** — a from-scratch BM25 engine in the Python standard library (no external packages). Point it at a single file or an entire folder; it indexes every `.md` / `.txt` / `.pdf` and recalls the most relevant chunks for your question.
+- **Generation (optional)** — if you have [Ollama](https://ollama.com) running locally with a model like `qwen2.5:1.5b`, it generates an answer grounded in the retrieved chunks. Data never leaves your machine.
+- **Interfaces** — command line, interactive REPL, and a **zero-dependency web UI** (`--serve`) you can open in a browser.
+
+### Quick start
+```bash
+# 1) Clone & run (no install needed — Python stdlib only)
+git clone https://github.com/yuchi036/LocalRAG.git
+cd LocalRAG
+
+# 2) Ask a question over the built-in example knowledge base
+python rag_qa.py --query "完播率多少算优秀"
+
+# 3) Or point it at YOUR OWN notes folder and open the web UI
+python rag_qa.py --doc ./my-notes --serve
+# → open http://localhost:8000
+```
+> Optional enhancements: `pip install jieba` (better Chinese word segmentation) and `pip install PyPDF2` (read PDFs).
+
+### Optional: local model generation (fully offline)
+```bash
+ollama pull qwen2.5:1.5b      # one-time
+python rag_qa.py --doc ./my-notes --query "项目复盘要注意什么" --generate
+```
+
+### Built-in example: an AIGC × short-video content-marketing knowledge base
+The repo ships with `生成式AI短视频内容营销知识库.md` — a domain knowledge base covering the full funnel (topic → script → assets → distribution → attribution), metrics, cost models, and compliance. It doubles as both a ready-to-use demo and a showcase of the author's domain expertise.
+
+### Evaluation (honest about limits)
+`evaluate.py` measures retrieval quality on a hand-labeled set. Default tokenizer reaches **Recall@3 ≈ 89%**. Importantly, a *conceptual* query like "数字人" still misses under lexical retrieval — even with `jieba` phrase segmentation — which is exactly why **semantic / vector retrieval** (the cloud `ima` variant) is the real fix. This project demonstrates both the lexical baseline and the motivation for going semantic.
+
+### Use cases (who it helps)
+- **Students** — chat with your lecture / textbook Markdown.
+- **Researchers** — query a folder of paper notes offline.
+- **Teams** — turn internal Markdown docs into a private searchable assistant.
+- **Privacy-conscious users** — everything stays local; nothing is sent to any server.
+
+### Roadmap
+- [ ] Vector/semantic retrieval backend (FAISS / sentence-transformers, optional)
+- [ ] Better PDF & DOCX parsing
+- [ ] Conversation memory across turns
+- [ ] One-command installer / Docker
 
 ---
 
-## 1. 这个项目是什么
+## 中文
 
-- **知识库文档**：`生成式AI短视频内容营销知识库.md` —— 覆盖从选题、脚本生成、素材生产、智能投放到归因复盘的全链路，并整理指标体系、成本模型、合规红线与前沿趋势。
-- **RAG 检索层**：`rag_qa.py` —— 纯 Python 标准库实现的 BM25 检索引擎，对 Markdown 分块、中文粗粒度切词、按问题召回 Top-K 相关片段；支持命令行、交互式（`--interactive`）、零依赖网页（`--serve`）、本地模型生成（`--generate`）。**无任何第三方依赖，离线可跑**。
-- **检索质量评估**：`evaluate.py` —— 用标注集计算 Recall@k / 命中率，量化检索效果并暴露 BM25 概念弱点。
-- **问答演练**：`demo_qa.md` —— 6 个业务问题经「检索命中 → 基于片段作答并标注来源」的两段式流程产出，体现 RAG 的**可追溯**特性。
+### 为什么做这个（痛点）
+每个人的电脑里都散落着本地笔记：课程笔记、论文、会议纪要、个人 wiki。但想"问"它们，通常只能 (a) 粘贴到**云端** AI 工具（隐私风险、收费、限流），或 (b) 手动翻找。**LocalRAG** 让你在**自己的机器上**跑完整套 RAG 流程，**无需 API Key、不上云、零费用**。
 
-## 2. RAG 原理（两段式）
+### 它能做什么
+- **检索段**：用 Python 标准库从零实现的 BM25 引擎（无任何第三方包）。指向单个文件或整个目录，自动索引所有 `.md` / `.txt` / `.pdf`，按问题召回最相关片段。
+- **生成段（可选）**：若本机运行着 [Ollama](https://ollama.com) 并拉取了如 `qwen2.5:1.5b` 的模型，可基于召回片段生成答案；数据不出本机。
+- **多种入口**：命令行、交互式 REPL，以及**零依赖网页 UI**（`--serve`，浏览器直接打开）。
 
-```
-用户提问 ──► [Retrieval] BM25 从知识库召回相关片段 ──► [Generation] LLM 基于片段作答（标注来源）
-```
-
-- **Retrieval（本项目已实现）**：把知识库按标题切分为 chunk，做 BM25 打分召回最相关片段。
-- **Generation（由 LLM / 云端知识库完成）**：将召回片段 + 问题送入大模型，生成带引用的答案。
-- 价值：回答**锚定在私有知识上**，减少幻觉，且每个结论可追溯来源——这正是企业知识库/RAG 应用的核心卖点。
-
-## 2.1 云端版 RAG 实践：ima 知识库（加分项）
-
-在本地 BM25 版之外，又用 **ima 知识库（腾讯）** 做了云端版 RAG 知识问答，二者对照：
-
-- **本地版**：自己写 BM25 检索（懂原理）。
-- **云端版**：通过 ima 知识库 MCP 接口完成 `上传 → 解析 → 语义检索` 全流程——`create_media` 拿 COS 凭证、COS 上传、`add_knowledge` 入库（后台自动切块+向量化）、`search_knowledge` 提问。零代码，语义检索。
-
-实测对照（详见 `ima_practice.md`）：
-
-| 提问 | ima 语义检索 | 本地 BM25 |
-|---|---|---|
-| 数字人技术对内容生产有什么价值 | ✅ 正确召回 | ❌ 漏掉 3.3 素材层（数字人） |
-| 短视频投流出价方式 / 赛马放量 | ✅ 命中 4.3 | ✅ 命中 |
-| 完播率多少算优秀 | ✅ 命中 5.1 指标表 | ✅ 命中 |
-| 生成式推荐 vs 协同过滤 | ✅ 命中文档 | ✅ 命中 |
-
-**核心洞察**：关键词检索按「词面重合」打分，概念型查询（如「数字人」）易漏召回；语义检索基于向量相似度能正确理解概念——这正是 RAG 里「关键词 vs 语义」检索的取舍。本地版证明「懂原理」，云端版证明「能落地」。
-
-## 3. 本地运行
-
+### 快速开始
 ```bash
-# 方式一：跑批检索（默认，零依赖、离线）
-python rag_qa.py --doc 生成式AI短视频内容营销知识库.md --questions questions.txt --topk 2
-
-# 方式二：单条提问
-python rag_qa.py --doc 生成式AI短视频内容营销知识库.md --query "完播率多少算优秀"
-
-# 方式三：交互式问答（边问边答，输入 exit 退出）
-python rag_qa.py --interactive
-
-# 方式四：本地网页问答（浏览器打开 http://localhost:8000，零依赖）
-python rag_qa.py --serve
-
-# 检索 + 本地模型生成（离线 RAG 闭环，需先装 Ollama）
-# 1) 安装 Ollama 并启动服务  → 2) ollama pull qwen2.5:1.5b  → 3) 运行：
-python rag_qa.py --query "完播率多少算优秀" --generate
+git clone https://github.com/yuchi036/LocalRAG.git
+cd LocalRAG
+python rag_qa.py --query "完播率多少算优秀"          # 用内置示例问答
+python rag_qa.py --doc ./my-notes --serve           # 指向你自己的笔记目录并开网页
+# → 浏览器打开 http://localhost:8000
 ```
+> 可选增强：`pip install jieba`（更准的中文分词）、`pip install PyPDF2`（读 PDF）。
 
-> 方式三/四 的所有检索与生成都在本机完成，不依赖任何外部服务；`--serve` 的网页同样用 Python 标准库实现，无需安装 Flask 等框架。
-
-## 3.1 检索质量评估（把 Demo 升级成可量化系统）
-
+### 可选：本地模型生成（完全离线）
 ```bash
-python evaluate.py            # 文本报告：Recall@k / 命中率
-python evaluate.py --topk 3 --md   # 输出 Markdown 表格
+ollama pull qwen2.5:1.5b      # 仅需一次
+python rag_qa.py --doc ./my-notes --query "项目复盘要注意什么" --generate
 ```
 
-脚本用一组人工标注的 (问题, 期望小节) 计算检索命中率，并刻意保留「数字人」这类概念型查询以暴露 BM25 的局限（与 ima 语义检索对照）。实测 Recall@3 ≈ 89%，概念型查询需语义检索补足。
+### 内置示例：AIGC × 短视频内容营销知识库
+仓库自带 `生成式AI短视频内容营销知识库.md` —— 覆盖"选题→脚本→素材→投放→归因"全链路、指标体系、成本模型与合规红线。它既是开箱即用的 Demo，也是作者领域专业度的展示。
 
-## 4. Git 工作流（本项目走过的真实流程）
+### 检索质量评估（坦诚说明局限）
+`evaluate.py` 用人工标注集量化检索质量。默认分词 **Recall@3 ≈ 89%**。关键的是，"数字人"这类**概念型**查询在关键词检索下仍会漏召回——即便换用 `jieba` 短语分词也补不回来，这恰恰说明**语义/向量检索**（云端 ima 版）才是真正的补丁。本项目同时展示了"词法检索基线"与"为何要走向语义"的动机。
 
-```bash
-git init -b main
-git add 生成式AI短视频内容营销知识库.md README.md .gitignore
-git commit -m "docs: 初始化 AIGC 短视频内容营销知识库"
-git checkout -b rag-demo
-git add rag_qa.py questions.txt demo_qa.md
-git commit -m "feat: 加入 BM25 本地检索与问答 Demo（RAG 实践）"
-git checkout main && git merge rag-demo --no-edit
-git remote add origin <你的仓库URL>
-git push -u origin main
-```
+### 适用人群（帮到谁）
+- **学生**：和你的课程/教材 Markdown 对话。
+- **研究者**：离线检索一整文件夹论文笔记。
+- **团队**：把内部 Markdown 文档变成私有可搜索助手。
+- **注重隐私者**：一切在本地，不上传任何服务器。
 
-分支策略：`main` 承载文档与说明，`rag-demo` 承载 RAG 代码，合并回主干——一次标准的 feature-branch 工作流。
-
-## 5. 简历 / 面试可用表述
-
-> **生成式 AI 内容营销知识库 & RAG 问答（个人项目）**
-> - 围绕 AIGC 短视频内容营销领域，独立整理覆盖「选题—生成—投放—归因」全链路的可检索知识库（含指标体系、成本模型、合规红线）。
-> - 用 Python 标准库实现 BM25 检索引擎（零依赖、离线可跑），并接入本机 Ollama 模型（qwen2.5:1.5b）完成生成段，打通「检索召回 + 本地模型生成」两段式 RAG、实现完全离线闭环，产出带来源标注的问答 Demo；并用评估脚本量化检索召回质量（Recall@3≈89%），客观呈现关键词检索在概念型查询上的局限。
-> - 另以 ima 知识库（腾讯）做云端版 RAG 实践：通过 API 完成上传、解析与语义问答，对比发现关键词检索在概念型查询上召回偏弱、语义检索更准，从而厘清 RAG 中关键词与语义检索的取舍。
-> - 体现了对 RAG 两段式、可追溯性、检索路线取舍的理解，以及与 AI 应用/内容增长业务的结合能力。
-
-## 6. 可选延伸 & 已完成
-
-- ✅ **云端版（已完成）**：通过 ima 知识库 API 完成上传、解析与语义检索，详见 `ima_practice.md`。
-- ✅ **生成层本地化（已完成）**：接入本机 Ollama 模型（qwen2.5:1.5b）做 Generation 段，实现「检索 + 生成」全链路**离线闭环**（`rag_qa.py` 的 `--generate`）。运行前 `ollama pull qwen2.5:1.5b` 并启动 Ollama 服务即可，数据不出本机、无 API 费用。
-- ✅ **检索质量评估（已完成）**：`evaluate.py` 用标注集计算 Recall@k / 命中率，量化检索效果（实测 Recall@3 ≈ 89%），并把 BM25 在概念型查询上的弱点暴露出来，作为「关键词 vs 语义」取舍的实证。
-- ✅ **交互式 & 网页问答（已完成）**：`rag_qa.py` 新增 `--interactive` 与 `--serve`（纯标准库 Web UI），让项目从一个"脚本"变成"可上手把玩的工具"，作品集演示更直观。
+### 路线图
+- [ ] 语义/向量检索后端（FAISS / sentence-transformers，可选）
+- [ ] 更强的 PDF / DOCX 解析
+- [ ] 多轮对话记忆
+- [ ] 一键安装 / Docker
 
 ---
-© 个人学习项目 · 内容为公开的行业知识整理，不含任何内部/涉密信息。
+
+## Project structure
+
+```
+LocalRAG/
+├─ rag_qa.py                       # 核心：BM25 检索 + 可选本地生成 + 交互/Web（零依赖）
+├─ evaluate.py                     # 检索质量评估（Recall@k / 命中率）
+├─ 生成式AI短视频内容营销知识库.md   # 内置示例知识库（AIGC 内容营销）
+├─ questions.txt / demo_qa.md      # 示例问题与两段式问答演练
+├─ ima_practice.md / ima_questions.md  # 云端语义检索（ima）实践与对照
+├─ requirements.txt                # 可选依赖（jieba / PyPDF2）
+├─ LICENSE                         # MIT
+└─ README.md
+```
+
+## Architecture
+
+```
+用户问题 ──► [Retrieval] BM25 从本地知识库召回 Top-K 片段 ──► [Generation] 本地模型基于片段作答（可选）
+            （标准库实现，支持文件/目录/PDF，可选 jieba 分词）        （Ollama，数据不出本机）
+```
+
+## License
+[MIT](LICENSE) — free to use, modify, and distribute.

@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-本地知识问答（RAG 全链路：Retrieval + Generation，完全离线）
-- Retrieval 段：纯标准库实现 BM25，对 Markdown 分块、中文粗粒度切词后召回 Top-K 片段
-- Generation 段：可选接入本机 Ollama 模型（如 qwen2.5:1.5b）基于召回片段作答
-- 交互：支持 --query / --questions 跑批、--interactive 交互问答、--serve 零依赖 Web UI
-- 全程零云端依赖：不联网、数据不出本机、无 API 费用
+LocalRAG —— 隐私优先的本地知识库问答（RAG 全链路，完全离线、零依赖）
+
+把你的 Markdown / 文本 / PDF 笔记变成一个可本地检索、可问答的助手：
+- Retrieval 段：纯标准库 BM25 检索（默认零依赖；可选 jieba 提升中文分词）。
+- Generation 段：可选接入本机 Ollama 模型基于召回片段作答，数据不出本机。
+- 输入：单个文件、或整个目录（递归索引所有 .md/.txt/.pdf）。
+- 交互：--query 跑批 / --interactive 交互 / --serve 零依赖网页问答。
+
+默认零第三方依赖；`pip install jieba`（中文更准）、`pip install PyPDF2`（读 PDF）为可选增强。
 
 用法：
-  # 仅检索（默认，最快，零依赖）
+  # 用内置示例文档问答（开箱即用）
   python rag_qa.py --query "完播率多少算优秀"
 
-  # 检索 + 本地模型生成（离线 RAG 闭环，需先 ollama pull qwen2.5:1.5b 并启动服务）
-  python rag_qa.py --query "完播率多少算优秀" --generate
+  # 指向你自己的笔记目录（递归索引所有 md/txt/pdf）
+  python rag_qa.py --doc ./my-notes --serve
 
-  # 交互式问答（边问边答，输入 exit 退出）
-  python rag_qa.py --interactive
-
-  # 启动本地网页问答（浏览器打开 http://localhost:8000）
-  python rag_qa.py --serve
+  # 启用本地模型生成（需先 ollama pull qwen2.5:1.5b 并启动）
+  python rag_qa.py --doc ./my-notes --query "项目复盘要注意什么" --generate
 """
 
 import argparse
@@ -26,43 +27,130 @@ import html
 import http.server
 import json
 import math
+import os
 import re
 import sys
 import urllib.parse
 import urllib.request
 
 
-def load_and_chunk(path):
-    """读取 Markdown，按 '#' 标题分块，保留层级标题作为 chunk 标题。"""
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
+# ------------------------- 分词（默认零依赖，可选 jieba）-------------------------
 
+def _char_tokenize(text):
+    """中文按字、英文/数字按词（零依赖，检索层够用）。"""
+    text = re.sub(r"[\s\W_]+", " ", text).lower()
+    return re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", text)
+
+
+def _jieba_tokenize(text):
+    import jieba
+    jieba.setLogLevel(20)
+    text = re.sub(r"[\s\W_]+", " ", text).lower()
+    return [t for t in jieba.cut(text) if t.strip()]
+
+
+def get_tokenizer(segment="auto"):
+    """segment: 'char' | 'jieba' | 'auto'（默认 auto：有 jieba 用 jieba，否则字级）。"""
+    if segment == "char":
+        return _char_tokenize
+    need_jieba = segment in ("jieba", "auto")
+    if need_jieba:
+        try:
+            import jieba  # noqa: F401
+            return _jieba_tokenize
+        except ImportError:
+            if segment == "jieba":
+                print("[warn] jieba 未安装，已回退字级分词；可 `pip install jieba`", file=sys.stderr)
+    return _char_tokenize
+
+
+# 向后兼容：evaluate.py 直接 import tokenize 时使用字级
+tokenize = _char_tokenize
+
+
+SUPPORTED_EXT = {".md", ".markdown", ".txt", ".pdf"}
+
+
+def _read_text(path):
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        return f.read()
+
+
+def _read_pdf(path):
+    try:
+        import PyPDF2
+    except ImportError:
+        print(f"[warn] 读取 PDF 需 PyPDF2：{os.path.basename(path)}（可 `pip install PyPDF2`）", file=sys.stderr)
+        return None
+    try:
+        reader = PyPDF2.PdfReader(path)
+        return "\n".join((p.extract_text() or "") for p in reader.pages)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] PDF 解析失败 {os.path.basename(path)}：{e}", file=sys.stderr)
+        return None
+
+
+def _chunk_markdown(text, source):
+    """按 '#' 标题切块，保留标题；无标题内容归入 '(开头)'。"""
     chunks = []
     cur_title = "(开头)"
     cur_body = []
-    for ln in lines:
+    for ln in text.splitlines():
         if ln.strip().startswith("#"):
             if cur_body:
-                chunks.append({"title": cur_title, "text": "".join(cur_body).strip()})
+                chunks.append({"title": cur_title, "text": "".join(cur_body).strip(), "source": source})
             cur_title = ln.strip().lstrip("#").strip()
             cur_body = []
         else:
             cur_body.append(ln)
     if cur_body:
-        chunks.append({"title": cur_title, "text": "".join(cur_body).strip()})
-    # 过滤空块
-    chunks = [c for c in chunks if c["text"]]
-    return chunks
+        chunks.append({"title": cur_title, "text": "".join(cur_body).strip(), "source": source})
+    return [c for c in chunks if c["text"]]
 
 
-def tokenize(text):
-    """中文粗粒度切词：去标点后按字符 + 英文单词。检索层面够用。"""
-    text = re.sub(r"[\s\W_]+", " ", text)
-    text = text.lower()
-    tokens = []
-    for m in re.finditer(r"[a-z0-9]+|[\u4e00-\u9fff]", text):
-        tokens.append(m.group(0))
-    return tokens
+def _chunk_plain(text, source):
+    """无标题的纯文本/PDF：按空行或固定长度切块，保证可检索。"""
+    paras = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    chunks = []
+    buf = []
+    for p in paras:
+        buf.append(p)
+        if sum(len(x) for x in buf) > 800:
+            chunks.append({"title": source, "text": "\n\n".join(buf), "source": source})
+            buf = []
+    if buf:
+        chunks.append({"title": source, "text": "\n\n".join(buf), "source": source})
+    return [c for c in chunks if c["text"]]
+
+
+def _load_one(fp):
+    ext = os.path.splitext(fp)[1].lower()
+    source = os.path.basename(fp)
+    if ext == ".pdf":
+        text = _read_pdf(fp)
+        return _chunk_plain(text, source) if text else []
+    text = _read_text(fp)
+    if ext in (".md", ".markdown"):
+        return _chunk_markdown(text, source)
+    return _chunk_plain(text, source)
+
+
+def load_and_chunk(path):
+    """path 可为：单个 .md/.txt/.pdf 文件，或一个目录（递归索引所有支持文件）。"""
+    if os.path.isdir(path):
+        files = []
+        for root, _, names in os.walk(path):
+            for n in sorted(names):
+                if os.path.splitext(n)[1].lower() in SUPPORTED_EXT:
+                    files.append(os.path.join(root, n))
+        files.sort()
+        if not files:
+            return []
+        chunks = []
+        for fp in files:
+            chunks.extend(_load_one(fp))
+        return chunks
+    return _load_one(path)
 
 
 class BM25:
@@ -86,13 +174,11 @@ class BM25:
     def idf(self, t):
         if t not in self.idf_cache:
             n = self.df.get(t, 0)
-            # 平滑 IDF
             self.idf_cache[t] = math.log(1 + (len(self.dl) - n + 0.5) / (n + 0.5))
         return self.idf_cache[t]
 
     def search(self, query, topk=3):
-        """返回 [(score, idx), ...]，按分数降序，最多 topk 个；分数>0 才入选。"""
-        q_tokens = tokenize(query)
+        q_tokens = _tokenize_query(query)
         if not q_tokens:
             return []
         scored = []
@@ -116,9 +202,17 @@ class BM25:
         return score
 
 
+# 查询分词器在 build_index 时确定（与文档分词一致）
+_SEGMENT = "auto"
+
+
+def _tokenize_query(query):
+    return get_tokenizer(_SEGMENT)(query)
+
+
 def generate_with_ollama(question, contexts, model="qwen2.5:1.5b", base_url="http://localhost:11434"):
     """本地生成段：把召回片段拼成上下文，调用本机 Ollama 模型作答。零云端依赖。"""
-    context = "\n\n".join(f"【{title}】\n{text}" for title, text in contexts)
+    context = "\n\n".join(f"【{title}】（来源：{src}）\n{text}" for title, text, src in contexts)
     prompt = (
         "你是一个严谨的问答助手。请只根据下面提供的「资料」回答问题，"
         "不要使用资料之外的知识；如果资料中没有相关信息，请回答「资料中未提及」。\n\n"
@@ -145,10 +239,13 @@ def generate_with_ollama(question, contexts, model="qwen2.5:1.5b", base_url="htt
         return f"（本地模型调用失败：{e}；请确认 Ollama 已启动且模型已拉取）"
 
 
-def build_index(doc_path):
-    """构建 BM25 索引并返回 (chunks, bm25)。供 CLI / 交互 / Web 复用。"""
+def build_index(doc_path, segment="auto"):
+    """构建 BM25 索引并返回 (chunks, bm25)。segment 决定中英文分词方式。"""
+    global _SEGMENT
+    _SEGMENT = segment
     chunks = load_and_chunk(doc_path)
-    bm25 = BM25([tokenize(c["text"]) for c in chunks])
+    tok = get_tokenizer(segment)
+    bm25 = BM25([tok(c["text"]) for c in chunks])
     return chunks, bm25
 
 
@@ -161,10 +258,11 @@ def run_query(chunks, bm25, question, topk=2, generate=False,
         result["hits"].append({
             "title": chunks[idx]["title"],
             "text": chunks[idx]["text"],
+            "source": chunks[idx].get("source", ""),
             "score": sc,
         })
     if generate and hits:
-        contexts = [(c["title"], c["text"]) for c in result["hits"]]
+        contexts = [(c["title"], c["text"], c["source"]) for c in result["hits"]]
         result["answer"] = generate_with_ollama(
             question, contexts, model=model, base_url=ollama_url
         )
@@ -179,7 +277,8 @@ def print_result(result, show_answer=True):
         print("（未命中相关片段）")
         return
     for rank, h in enumerate(result["hits"], 1):
-        print(f"\n  [{rank}] 命中小节：{h['title']}  (score={h['score']:.3f})")
+        src = f"  · 来源：{h['source']}" if h["source"] else ""
+        print(f"\n  [{rank}] 命中小节：{h['title']}  (score={h['score']:.3f}){src}")
         snippet = h["text"].replace("\n", " ")
         print("      " + snippet[:240] + ("…" if len(snippet) > 240 else ""))
     if show_answer and result.get("answer") is not None:
@@ -210,7 +309,7 @@ def interactive_mode(chunks, bm25, args):
 
 WEB_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AIGC 知识库 · 本地 RAG 问答</title>
+<title>LocalRAG · 本地知识库问答</title>
 <style>
   body{font-family:system-ui,'Microsoft YaHei',sans-serif;max-width:840px;margin:36px auto;padding:0 16px;background:#0f1115;color:#e6e6e6;line-height:1.6}
   h1{font-size:20px;border-bottom:1px solid #2a2f3a;padding-bottom:10px}
@@ -222,19 +321,19 @@ WEB_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
   hr{border:0;border-top:1px solid #2a2f3a;margin:22px 0}
   .q{font-size:16px;font-weight:600;margin-bottom:12px}
   .hit{background:#161a21;border:1px solid #2a2f3a;border-radius:8px;padding:12px 14px;margin-bottom:10px}
-  .hit b{color:#7dd3fc}.sc{color:#64748b;font-size:13px;margin-left:6px}
+  .hit b{color:#7dd3fc}.sc{color:#64748b;font-size:13px;margin-left:6px}.src{color:#475569;font-size:12px;margin-left:6px}
   .sn{color:#b8c0cc;font-size:14px;margin-top:6px}
   .ans{background:#10231a;border:1px solid #1f4d39;border-radius:8px;padding:12px 14px;margin-top:14px;color:#cfe9d8}
   .miss{color:#f87171}
   .tip{color:#64748b;font-size:13px}
 </style></head><body>
-<h1>本地 RAG 问答（BM25 检索 + 可选本地模型生成）</h1>
+<h1>LocalRAG · 本地知识库问答（BM25 检索 + 可选本地模型生成）</h1>
 <form method="post" action="/">
-  <input type="text" name="q" placeholder="输入你的问题，如：完播率多少算优秀、投流怎么赛马放量" value="{Q}">
+  <input type="text" name="q" placeholder="输入你的问题，如：完播率多少算优秀、项目复盘要注意什么" value="{Q}">
   <label><input type="checkbox" name="generate" {GEN}> 启用本地模型</label>
   <button type="submit">提问</button>
 </form>
-<p class="tip">纯标准库实现，离线可跑；勾选「启用本地模型」需本机已启动 Ollama 并拉取 qwen2.5:1.5b。</p>
+<p class="tip">纯标准库实现，离线可跑；勾选「启用本地模型」需本机已启动 Ollama 并拉取 qwen2.5:1.5b。把 --doc 指向你的笔记目录即可问答自己的资料。</p>
 <hr>
 {RESULTS}
 </body></html>"""
@@ -247,9 +346,10 @@ def build_results_html(res):
     else:
         for i, h in enumerate(res["hits"], 1):
             snippet = html.escape(h["text"].replace("\n", " "))[:240]
+            src = f'<span class="src">来源：{html.escape(h["source"])}</span>' if h["source"] else ""
             parts.append(
                 f'<div class="hit"><b>[{i}] {html.escape(h["title"])}</b>'
-                f'<span class="sc">score={h["score"]:.3f}</span>'
+                f'<span class="sc">score={h["score"]:.3f}</span>{src}'
                 f'<div class="sn">{snippet}</div></div>'
             )
     if res.get("answer"):
@@ -302,22 +402,25 @@ def run_server(chunks, bm25, args):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--doc", default="生成式AI短视频内容营销知识库.md")
+    ap.add_argument("--doc", default="生成式AI短视频内容营销知识库.md",
+                    help="知识库：单个 .md/.txt/.pdf 文件，或一个目录（递归索引）")
     ap.add_argument("--questions", default=None, help="问题列表文件，一行一个")
     ap.add_argument("--query", default=None, help="单个问题")
-    ap.add_argument("--topk", type=int, default=2)
+    ap.add_argument("--topk", type=int, default=3)
     ap.add_argument("--generate", action="store_true",
                     help="启用本地模型(Ollama)生成答案，实现离线 RAG 闭环")
     ap.add_argument("--model", default="qwen2.5:1.5b", help="Ollama 模型名")
     ap.add_argument("--ollama-url", default="http://localhost:11434", help="Ollama 服务地址")
+    ap.add_argument("--segment", default="auto", choices=["auto", "char", "jieba"],
+                    help="中文分词：auto(有jieba用jieba,否则字级)/char/jieba")
     ap.add_argument("--interactive", action="store_true", help="交互式问答模式")
     ap.add_argument("--serve", action="store_true", help="启动本地 Web UI（零依赖，浏览器问答）")
     ap.add_argument("--port", type=int, default=8000, help="Web UI 端口")
     args = ap.parse_args()
 
-    chunks, bm25 = build_index(args.doc)
+    chunks, bm25 = build_index(args.doc, segment=args.segment)
     if not chunks:
-        print("未读取到内容块", file=sys.stderr)
+        print(f"未在 {args.doc} 读取到内容块（检查路径/后缀 .md .txt .pdf）", file=sys.stderr)
         sys.exit(1)
 
     if args.serve:
@@ -337,8 +440,8 @@ def main():
     if not queries:
         print("未提供 --query / --questions，且无 --interactive / --serve。")
         print("示例： python rag_qa.py --query \"完播率多少算优秀\"")
+        print("       python rag_qa.py --doc ./my-notes --serve")
         print("       python rag_qa.py --interactive")
-        print("       python rag_qa.py --serve")
         ap.print_help()
         return
 
