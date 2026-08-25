@@ -158,5 +158,12 @@ LocalRAG/
 - **Quantified retrieval quality** — `evaluate.py` reports **Recall@k, Recall@1, MRR, coverage, and search latency (p50/p95)** on a hand-labeled set. The web homepage shows the live baseline for the built-in KB. `evaluate.py --compare` honestly contrasts `char` vs `jieba` segmentation (skips jieba if not installed).
 - **Explainable retrieval** — every result now lists the **matched terms** (which query tokens actually fired), so you can see *why* a chunk was recalled. CLI and web UI both surface this.
 
+## Demo (zero-config)
+No arguments needed — it picks the built-in knowledge base, opens the web UI with preset example questions, and works fully offline:
+```bash
+python -m localrag --demo        # → http://localhost:8000  (click any 示例问题 to ask)
+```
+This is the fastest way to *see* the product: search + matched-term explanations + live quality baseline + 赞/踩 feedback, all in the browser.
+
 ## License
 [MIT](LICENSE) — free to use, modify, and distribute.

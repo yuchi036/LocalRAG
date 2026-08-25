@@ -1,12 +1,23 @@
 # -*- coding: utf-8 -*-
-"""命令行入口：--query / --questions / --interactive / --serve 与各项参数。"""
+"""命令行入口：--query / --questions / --interactive / --serve / --demo 与各项参数。"""
 import argparse
+import os
 import sys
 
 from localrag.persist import make_index_path
 from localrag.pipeline import (interactive_mode, print_result, restore_or_build,
                                run_query)
 from localrag.webui import run_server
+
+PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(PKG_DIR)
+BUILTIN_KB = "生成式AI短视频内容营销知识库.md"
+
+
+def builtin_kb_path():
+    """解析内置示例库路径：优先仓库根目录，否则回退到当前目录同名文件。"""
+    cand = os.path.join(REPO_ROOT, BUILTIN_KB)
+    return cand if os.path.exists(cand) else BUILTIN_KB
 
 
 def main():
@@ -24,6 +35,8 @@ def main():
                     help="中文分词：auto(有jieba用jieba,否则字级)/char/jieba")
     ap.add_argument("--interactive", action="store_true", help="交互式问答模式")
     ap.add_argument("--serve", action="store_true", help="启动本地 Web UI（零依赖，浏览器问答）")
+    ap.add_argument("--demo", action="store_true",
+                    help="零配置演示：内置示例库 + 预设问题 + 网页 UI（无需任何参数）")
     ap.add_argument("--port", type=int, default=8000, help="Web UI 端口")
     ap.add_argument("--index", default=None,
                     help="索引缓存路径；默认在文档旁生成 .localrag_index.json 实现秒开")
@@ -31,6 +44,11 @@ def main():
     ap.add_argument("--feedback", default=".localrag_feedback.jsonl",
                     help="Web UI 反馈日志(JSONL)路径，首次点击自动创建")
     args = ap.parse_args()
+
+    if args.demo:
+        # 零配置：强制使用内置示例库并打开网页（预设问题由 Web UI 渲染）
+        args.doc = builtin_kb_path()
+        args.serve = True
 
     index_path = None if args.no_cache else (args.index or make_index_path(args.doc))
     chunks, bm25, loaded = restore_or_build(args.doc, segment=args.segment, index_path=index_path)

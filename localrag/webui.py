@@ -44,6 +44,10 @@ WEB_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
   .metrics{background:#161a21;border:1px solid #2a2f3a;border-radius:8px;padding:10px 14px;margin:14px 0;font-size:13px;color:#b8c0cc}
   .metrics b{color:#e6e6e6}
   .mt{color:#475569;font-size:12px;margin-top:4px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+  .chip-tip{font-size:13px;color:#64748b}
+  .chip{padding:6px 12px;border:1px solid #2a2f3a;border-radius:999px;background:#161a21;color:#b8c0cc;font-size:13px;cursor:pointer}
+  .chip:hover{border-color:#3b82f6;color:#e6e6e6}
   .fbrow{display:flex;gap:8px;align-items:center;margin-top:8px}
   .fb-tip{font-size:12px;color:#64748b}
   .fb{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid #2a2f3a;border-radius:6px;background:#161a21;color:#b8c0cc;font-size:13px;cursor:pointer}
@@ -57,11 +61,18 @@ WEB_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
   <label><input type="checkbox" name="generate" {GEN}> 启用本地模型</label>
   <button type="submit">提问</button>
 </form>
+{DEMO}
 <p class="tip">纯标准库实现，离线可跑；勾选「启用本地模型」需本机已启动 Ollama 并拉取 qwen2.5:1.5b。把 --doc 指向你的笔记目录即可问答自己的资料。对结果点「赞/踩」可沉淀反馈，反哺检索质量。</p>
 {METRICS}
 <hr>
 {RESULTS}
 <script>
+document.querySelectorAll('button.chip').forEach(function(c){
+  c.addEventListener('click', function(){
+    var inp = document.querySelector('input[name=q]');
+    if(inp){ inp.value = c.dataset.q; inp.form.submit(); }
+  });
+});
 document.querySelectorAll('.fbrow').forEach(function(row){
   row.addEventListener('click', function(e){
     var b = e.target.closest('button.fb'); if(!b || b.disabled) return;
@@ -118,6 +129,27 @@ def build_results_html(res):
     return "\n".join(parts)
 
 
+# 零配置演示的预设问题（点击即问，无需用户自己构思）
+DEMO_QUESTIONS = [
+    "完播率多少算优秀",
+    "选题有什么方法论",
+    "短视频投流应该用什么出价方式",
+    "北极星指标应该选哪个",
+    "AI 生成内容在合规上有哪些风险",
+]
+
+
+def build_demo_html(args):
+    """演示模式：渲染预设问题为可点击 chip；非演示模式返回空。"""
+    if not getattr(args, "demo", False):
+        return ""
+    chips = "".join(
+        f'<button type="button" class="chip" data-q="{html.escape(q)}">{html.escape(q)}</button>'
+        for q in DEMO_QUESTIONS
+    )
+    return f'<div class="chips"><span class="chip-tip">示例问题（点击直接提问）：</span>{chips}</div>'
+
+
 def build_metrics_html(args, chunks, bm25):
     """首页基线指标面板：仅对内置示例库有意义（有标注集），其余文档不展示以免误导。"""
     doc = getattr(args, "doc", None)
@@ -142,6 +174,7 @@ def build_metrics_html(args, chunks, bm25):
 def make_web_handler(chunks, bm25, args):
     feedback_path = getattr(args, "feedback", None)
     metrics_html = build_metrics_html(args, chunks, bm25)
+    demo_html = build_demo_html(args)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _send(self, body, code=200, content_type="text/html; charset=utf-8"):
@@ -154,7 +187,8 @@ def make_web_handler(chunks, bm25, args):
             return (WEB_PAGE.replace("{Q}", q)
                            .replace("{GEN}", gen)
                            .replace("{RESULTS}", results)
-                           .replace("{METRICS}", metrics_html))
+                           .replace("{METRICS}", metrics_html)
+                           .replace("{DEMO}", demo_html))
 
         def do_GET(self):
             self._send(self._page())
