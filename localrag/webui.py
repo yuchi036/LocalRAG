@@ -7,6 +7,7 @@ S3 增强：每条召回结果附带「赞 / 踩」反馈按钮（SVG 图标，�
 import html
 import http.server
 import json
+import os
 import urllib.parse
 
 from localrag.feedback import log_feedback
@@ -40,6 +41,9 @@ WEB_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
   .ans{background:#10231a;border:1px solid #1f4d39;border-radius:8px;padding:12px 14px;margin-top:14px;color:#cfe9d8}
   .miss{color:#f87171}
   .tip{color:#64748b;font-size:13px}
+  .metrics{background:#161a21;border:1px solid #2a2f3a;border-radius:8px;padding:10px 14px;margin:14px 0;font-size:13px;color:#b8c0cc}
+  .metrics b{color:#e6e6e6}
+  .mt{color:#475569;font-size:12px;margin-top:4px}
   .fbrow{display:flex;gap:8px;align-items:center;margin-top:8px}
   .fb-tip{font-size:12px;color:#64748b}
   .fb{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid #2a2f3a;border-radius:6px;background:#161a21;color:#b8c0cc;font-size:13px;cursor:pointer}
@@ -54,6 +58,7 @@ WEB_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
   <button type="submit">提问</button>
 </form>
 <p class="tip">纯标准库实现，离线可跑；勾选「启用本地模型」需本机已启动 Ollama 并拉取 qwen2.5:1.5b。把 --doc 指向你的笔记目录即可问答自己的资料。对结果点「赞/踩」可沉淀反馈，反哺检索质量。</p>
+{METRICS}
 <hr>
 {RESULTS}
 <script>
@@ -99,7 +104,9 @@ def build_results_html(res):
                 f'<div class="hit"><b>[{i}] {title}</b>'
                 f'<span class="sc">score={h["score"]:.3f}</span>{src_span}'
                 f'<div class="sn">{snippet}</div>'
-                f'<div class="fbrow"><span class="fb-tip">这条是否有用？</span>'
+                + (f'<div class="mt">匹配词：{" / ".join(html.escape(t) for t in h.get("matched", []))}</div>'
+                   if h.get("matched") else "")
+                + f'<div class="fbrow"><span class="fb-tip">这条是否有用？</span>'
                 f'<button type="button" class="fb" data-vote="up" data-q="{q}" data-title="{title}" '
                 f'data-source="{src_esc}" data-loc="{loc_esc}">{SVG_UP}有用</button>'
                 f'<button type="button" class="fb" data-vote="down" data-q="{q}" data-title="{title}" '
@@ -111,8 +118,30 @@ def build_results_html(res):
     return "\n".join(parts)
 
 
+def build_metrics_html(args, chunks, bm25):
+    """首页基线指标面板：仅对内置示例库有意义（有标注集），其余文档不展示以免误导。"""
+    doc = getattr(args, "doc", None)
+    if not doc or os.path.basename(doc) != "生成式AI短视频内容营销知识库.md":
+        return ""
+    try:
+        from localrag.metrics import (GROUND_TRUTH, evaluate_retrieval,
+                                      latency_percentiles)
+        topk = getattr(args, "topk", 3)
+        m = evaluate_retrieval(chunks, bm25, GROUND_TRUTH, topk)
+        lat = latency_percentiles(bm25, [q for q, _ in GROUND_TRUTH], topk)
+    except Exception:  # noqa: BLE001
+        return ""
+    return (
+        f'<div class="metrics"><b>检索质量基线（内置示例库，Top-{m["topk"]}）</b><br>'
+        f'Recall@{m["topk"]} = {m["recall_at_k"]:.0%} · Recall@1 = {m["recall_at_1"]:.0%} · '
+        f'MRR = {m["mrr"]:.3f} · 覆盖率 = {m["coverage"]:.0%}<br>'
+        f'<span class="tip">检索延迟 p50 {lat["p50"]:.2f}ms / p95 {lat["p95"]:.2f}ms（本地 BM25，离线）</span></div>'
+    )
+
+
 def make_web_handler(chunks, bm25, args):
     feedback_path = getattr(args, "feedback", None)
+    metrics_html = build_metrics_html(args, chunks, bm25)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _send(self, body, code=200, content_type="text/html; charset=utf-8"):
@@ -121,8 +150,14 @@ def make_web_handler(chunks, bm25, args):
             self.end_headers()
             self.wfile.write(body.encode("utf-8"))
 
+        def _page(self, q="", gen="", results=""):
+            return (WEB_PAGE.replace("{Q}", q)
+                           .replace("{GEN}", gen)
+                           .replace("{RESULTS}", results)
+                           .replace("{METRICS}", metrics_html))
+
         def do_GET(self):
-            self._send(WEB_PAGE.replace("{Q}", "").replace("{GEN}", "").replace("{RESULTS}", ""))
+            self._send(self._page())
 
         def do_POST(self):
             length = int(self.headers.get("Content-Length", 0))
@@ -134,13 +169,12 @@ def make_web_handler(chunks, bm25, args):
             q = form.get("q", [""])[0].strip()
             use_gen = "generate" in form
             if not q:
-                self._send(WEB_PAGE.replace("{Q}", "").replace("{GEN}", "").replace("{RESULTS}", ""))
+                self._send(self._page())
                 return
             res = run_query(chunks, bm25, q, topk=args.topk,
                             generate=use_gen, model=args.model, ollama_url=args.ollama_url)
-            page = (WEB_PAGE.replace("{Q}", html.escape(q))
-                           .replace("{GEN}", "checked" if use_gen else "")
-                           .replace("{RESULTS}", build_results_html(res)))
+            page = self._page(html.escape(q), "checked" if use_gen else "",
+                              build_results_html(res))
             self._send(page)
 
         def _handle_feedback(self, raw):

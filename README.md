@@ -126,7 +126,8 @@ LocalRAG/
 │  ├─ persist.py                   # 索引持久化（JSON/pickle，带版本号，二次启动秒开）
 │  ├─ feedback.py                  # 赞/踩反馈日志（追加式 JSONL）
 │  ├─ webui.py                     # 零依赖 Web UI（深色主题，含赞/踩反馈按钮）
-│  ├─ evaluation.py                # 检索质量评估（Recall@k / 命中率）
+│  ├─ metrics.py                   # 可量化指标（Recall@k/MRR/覆盖率/延迟，分词对比）
+│  ├─ evaluation.py                # 检索质量评估（基于 metrics，CLI 报告）
 │  ├─ cli.py                       # 命令行入口（rag_qa.py 转发至此）
 │  └─ __main__.py                  # 支持 python -m localrag
 ├─ rag_qa.py / evaluate.py         # 向后兼容入口（转发到 localrag 包）
@@ -152,6 +153,10 @@ LocalRAG/
 - **Index persistence** — indexes are cached next to the document (`.localrag_index.json`); a second launch loads in milliseconds instead of rebuilding. Use `--index PATH` to control the path, or `--no-cache` to disable. Large corpora can also use `--index cache.pkl` (pickle, faster + smaller).
 - **Locatable citations** — every recalled chunk carries a source file and line range (`L80-87`), so you can jump straight back to the original text.
 - **Feedback loop** — the web UI shows 赞/踩 (thumbs up / down) buttons on each result; clicks are appended to a JSONL log (`--feedback PATH`, created on first use) for later retrieval-quality analysis.
+
+## What's new (v0.4.0)
+- **Quantified retrieval quality** — `evaluate.py` reports **Recall@k, Recall@1, MRR, coverage, and search latency (p50/p95)** on a hand-labeled set. The web homepage shows the live baseline for the built-in KB. `evaluate.py --compare` honestly contrasts `char` vs `jieba` segmentation (skips jieba if not installed).
+- **Explainable retrieval** — every result now lists the **matched terms** (which query tokens actually fired), so you can see *why* a chunk was recalled. CLI and web UI both surface this.
 
 ## License
 [MIT](LICENSE) — free to use, modify, and distribute.

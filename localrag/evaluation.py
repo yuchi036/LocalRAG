@@ -1,34 +1,57 @@
 # -*- coding: utf-8 -*-
-"""检索质量评估：用一组人工标注的 (问题, 期望小节) 计算 Recall@k / 命中率。
+"""检索质量评估：基于人工标注集量化 Recall@k / MRR / 覆盖率 / 延迟。
 
-判定逻辑：期望小节里任一条出现在检索 Top-K 的标题中（模糊子串匹配）即算命中。
-刻意保留一条"数字人"样本——它暴露 BM25 在概念型查询上的弱点（与 ima 语义检索对照）。
-加 --segment jieba 可观察中文短语分词对相关度的差异；由于 S1 已修复分词一致性，
-文档与查询现在使用同一个 tokenizer，对比实验结果可信。
+判定：期望小节出现在 Top-K 标题中即命中（模糊子串匹配）。
+S1 修复分词一致性后，char / jieba 的对比结论才可信；用 --compare 看实测差异。
 
 用法：
-  python evaluate.py                 # 文本报告（默认分词）
-  python evaluate.py --topk 3 --md  # 输出 Markdown 表格
-  python evaluate.py --segment jieba  # 用 jieba 分词重测，观察短语级差异
+  python evaluate.py                      # 文本报告（默认分词）
+  python evaluate.py --topk 3 --md        # 输出 Markdown 表格
+  python evaluate.py --segment jieba      # 用 jieba 分词重测
+  python evaluate.py --compare            # 诚实对比 char 与 jieba 指标
 """
 import argparse
+import sys
 
-from localrag.bm25 import BM25
-from localrag.ingestion import load_and_chunk
-from localrag.tokenize import get_tokenizer
+from localrag.metrics import (GROUND_TRUTH, compare_segments, evaluate_retrieval,
+                              latency_percentiles)
+from localrag.pipeline import build_index
 
-GROUND_TRUTH = [
-    ("完播率和互动率多少算优秀，为什么重要", ["5.1 内容侧", "4.1 平台算法逻辑"]),
-    ("生成式推荐相比传统推荐有什么优势", ["4.2 生成式推荐"]),
-    ("AI 生成内容在合规上有哪些风险", ["8. 合规与风险", "3.4 质量门禁"]),
-    ("短视频投流应该用什么出价方式，怎么赛马放量", ["4.3 付费投流策略"]),
-    ("北极星指标应该选哪个，内容号和带货号有什么不同", ["5.3 北极星指标"]),
-    ("单条内容成本和回本周期怎么算，降本增效杠杆在哪", ["7. 成本结构与 ROI 模型"]),
-    ("选题有什么方法论", ["6.1 选题方法论"]),
-    ("归因模型有哪些，小团队怎么选", ["6.2 归因模型"]),
-    # ↓ 刻意保留：字级分词无法把"数字人"当整体概念匹配，预期会漏召回（jieba 可补回）
-    ("数字人技术对短视频内容生产有什么价值", ["3.2 素材层"]),
-]
+
+def _print_report(m, md=False):
+    n = m["n"]
+    topk = m["topk"]
+    print(f"样本数 = {n}   检索 topk = {topk}")
+    print(f"Recall@{topk} (命中率) = {m['recall_at_k']:.0%}")
+    print(f"Recall@1            = {m['recall_at_1']:.0%}")
+    print(f"MRR                 = {m['mrr']:.3f}")
+    print(f"覆盖率(加权)        = {m['coverage']:.0%}")
+    lat = m.get("latency")
+    if lat and lat["n"]:
+        print(f"检索延迟(ms) p50/p95/mean = {lat['p50']:.2f} / {lat['p95']:.2f} / {lat['mean']:.2f}  (n={lat['n']})")
+    print()
+
+    if md:
+        print("| 问题 | 是否命中 | 首命中位 | Top-3 命中小节 |")
+        print("|---|---|---|---|")
+        for r in m["rows"]:
+            rank = r["rank"] if r["rank"] else "-"
+            ok = "✅" if r["hit"] else "❌"
+            print(f"| {r['q']} | {ok} | {rank} | {' / '.join(r['titles'])} |")
+    else:
+        for r in m["rows"]:
+            ok = "✅" if r["hit"] else "❌"
+            print(f"[{ok}] {r['q']}\n     命中小节: {' / '.join(r['titles'])}")
+
+    miss = m["missed"]
+    if miss:
+        print("\n未命中样本（BM25 局限 / 或文档确实无对应内容）：")
+        for q in miss:
+            print("  -", q)
+        print("提示：这正是「关键词检索 vs 语义检索」的取舍点——")
+        print("      概念型查询（如「数字人」）靠词频/短语匹配都会漏召回；")
+        print("      jieba 能提升短语级相关度，但无法理解概念；真正的补丁是语义/向量检索（云端 ima 版）。")
+    print("\n结论：BM25 在词面吻合的查询上命中率高；概念型查询需更优分词或语义检索补足。")
 
 
 def main():
@@ -37,49 +60,24 @@ def main():
     ap.add_argument("--topk", type=int, default=3)
     ap.add_argument("--segment", default="auto", choices=["auto", "char", "jieba"])
     ap.add_argument("--md", action="store_true", help="输出 Markdown 表格")
+    ap.add_argument("--compare", action="store_true", help="对比 char 与 jieba 分词指标")
     args = ap.parse_args()
 
-    chunks = load_and_chunk(args.doc)
-    tok = get_tokenizer(args.segment)
-    # 文档与查询使用同一个 tokenizer（S1 修复的分词一致性）
-    bm25 = BM25([tok(c["text"]) for c in chunks], tokenizer=tok)
+    if args.compare:
+        print("=== 分词对比（同一文档、同一标注集，分词一致性已修复，结论可信）===")
+        res = compare_segments(args.doc, args.topk)
+        if not res:
+            print("无可对比的分词（jieba 未安装且 char 也异常），请检查环境。")
+            return
+        for seg, m in res.items():
+            print(f"\n--- 分词：{seg} ---")
+            _print_report(m, md=args.md)
+        return
 
-    hits_at_1 = 0
-    hits_at_k = 0
-    rows = []
-    for q, expected in GROUND_TRUTH:
-        res = bm25.search(q, topk=args.topk)
-        titles = [chunks[idx]["title"] for _, idx in res]
-        hit = any(any(exp in t for exp in expected) for t in titles)
-        top1_hit = any(exp in titles[0] for exp in expected) if titles else False
-        hits_at_k += int(hit)
-        hits_at_1 += int(top1_hit)
-        rows.append((q, "✅" if hit else "❌", " / ".join(titles[:3])))
-
-    n = len(GROUND_TRUTH)
-    print(f"样本数 = {n}   检索 topk = {args.topk}   分词 = {args.segment}")
-    print(f"Recall@{args.topk} (命中率) = {hits_at_k}/{n} = {hits_at_k / n:.0%}")
-    print(f"Recall@1            = {hits_at_1}/{n} = {hits_at_1 / n:.0%}")
-    print()
-
-    if args.md:
-        print("| 问题 | 是否命中 | Top-3 命中小节 |")
-        print("|---|---|---|")
-        for q, ok, tt in rows:
-            print(f"| {q} | {ok} | {tt} |")
-    else:
-        for q, ok, tt in rows:
-            print(f"[{ok}] {q}\n     命中小节: {tt}")
-
-    miss = [q for q, ok, _ in rows if ok == "❌"]
-    if miss:
-        print("\n未命中样本（BM25 局限 / 或文档确实无对应内容）：")
-        for m in miss:
-            print("  -", m)
-        print("提示：这正是「关键词检索 vs 语义检索」的取舍点——")
-        print("      概念型查询（如「数字人」）靠词频/短语匹配都会漏召回；")
-        print("      jieba 能提升短语级相关度，但无法理解概念；真正的补丁是语义/向量检索（云端 ima 版）。")
-    print("\n结论：BM25 在词面吻合的查询上命中率高；概念型查询需更优分词或语义检索补足。")
+    chunks, bm25 = build_index(args.doc, segment=args.segment)
+    m = evaluate_retrieval(chunks, bm25, GROUND_TRUTH, args.topk)
+    m["latency"] = latency_percentiles(bm25, [q for q, _ in GROUND_TRUTH], args.topk)
+    _print_report(m, md=args.md)
 
 
 if __name__ == "__main__":

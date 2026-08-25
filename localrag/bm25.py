@@ -85,6 +85,10 @@ class BM25:
         obj.idf_cache = {}
         return obj
 
+    def matched_terms(self, query, idx):
+        """返回查询中、且确实出现在第 idx 个 chunk 里的词（解释"为何召回"）。"""
+        return [t for t in self.tokenizer(query) if self.f[idx].get(t, 0) > 0]
+
     def _score_query(self, q_tokens, idx):
         score = 0.0
         for t in q_tokens:

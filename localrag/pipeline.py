@@ -50,6 +50,7 @@ def run_query(chunks, bm25, question, topk=2, generate=False,
             "source": chunks[idx].get("source", ""),
             "loc": chunks[idx].get("loc", ""),
             "score": sc,
+            "matched": bm25.matched_terms(question, idx),
         })
     if generate and hits:
         contexts = [(c["title"], c["text"], c["source"]) for c in result["hits"]]
@@ -71,6 +72,8 @@ def print_result(result, show_answer=True):
         if h.get("loc"):
             src += f" ({h['loc']})"
         print(f"\n  [{rank}] 命中小节：{h['title']}  (score={h['score']:.3f}){src}")
+        if h.get("matched"):
+            print("      匹配词：" + " / ".join(h["matched"]))
         snippet = h["text"].replace("\n", " ")
         print("      " + snippet[:240] + ("…" if len(snippet) > 240 else ""))
     if show_answer and result.get("answer") is not None:
